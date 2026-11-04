@@ -1,5 +1,5 @@
 // Rombo — service worker: funziona offline dopo il primo caricamento.
-const CACHE = 'rombo-v2';
+const CACHE = 'rombo-v3';
 const FILES = ['./', 'index.html', 'style.css', 'app.js', 'engine-core.js', 'engine-worklet.js', 'presets.js', 'drivetrain.js',
   'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png',
   'assets/loops/cc0_i4_idle_837.wav', 'assets/loops/cc0_i4_low_1476.wav', 'assets/loops/cc0_i4_med_2010.wav', 'assets/loops/cc0_i4_high_2550.wav'];

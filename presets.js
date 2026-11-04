@@ -20,7 +20,10 @@ export const PRESETS = {
     torque: 440, torquePeak: 0.6, torqueWidth: 0.55, mass: 1570,
     // coppia relativa con il "buco" della transizione sequenziale intorno a 4000 giri
     torqueCurve: [[800, 0.42], [1800, 0.58], [2800, 0.86], [3500, 0.93], [3900, 0.86], [4300, 1.0], [5200, 0.98], [6000, 0.9], [6800, 0.78]],
-    turbo: { spoolStart: 1600, spoolFull: 3000, seq: { start: 3300, full: 4300, mix: 0.45 }, whistle: 0.032, whistle2: 0.07, bov: 'both', damp: 0.45 },
+    turbo: { spoolStart: 1600, spoolFull: 3000, seq: { start: 3300, full: 4300, mix: 0.45 }, whistle: 0.032, whistle2: 0.07, bov: 'both', damp: 0.45,
+      // pompaggio del compressore ("tu-tu-tu"): in rilascio e a gas parziale mentre sale la pressione
+      surge: 0.85, flutRate: [12, 24], flutDecay: 0.6, flutGain: 1.5, flutBody: 95 },
+    burble: 0.5, popBody: 170,
     pulseDeg: 68, noise: 0.40, lope: 0.06,
     header: { len: 0.45, refl: -0.30 }, pipe: { len: 3.3, refl: -0.46 }, crossover: 0.45,
     muffler: { closedLP: 720, openLP: 2700, closedGain: 0.8, openGain: 1.25 },
@@ -59,7 +62,7 @@ export const PRESETS = {
     idle: 820, redline: 7000, limiter: 7100,
     ratios: [3.56, 2.19, 1.41, 1.00, 0.83, 0.68, 0.55], final: 4.10, tyre: 2.05,
     torque: 480, torquePeak: 0.5, torqueWidth: 0.5, mass: 1550,
-    turbo: { spoolStart: 2200, spoolFull: 3800, whistle: 0.028, bov: 'flutter', damp: 0.35 },
+    turbo: { spoolStart: 2200, spoolFull: 3800, whistle: 0.028, bov: 'flutter', damp: 0.35, surge: 0.4 },
     pulseDeg: 74, noise: 0.5, lope: 0.25,
     header: { len: 0.70, refl: -0.40 }, pipe: { len: 2.9, refl: -0.48 }, crossover: 0,
     muffler: { closedLP: 800, openLP: 2300, closedGain: 0.8, openGain: 1.2 },

@@ -6,6 +6,7 @@
 // propria bancata, poi propagato in due guide d'onda (collettore + tubo) con riflessioni e perdite, silenziatore
 // (valvola aperta/chiusa), risonanze di scarico, aspirazione, meccanica, turbo, scoppiettii in rilascio.
 
+const FLUT_G = (typeof process !== 'undefined' && process.env && process.env.FLUT_G) ? +process.env.FLUT_G : 1;
 const TAU = Math.PI * 2;
 
 class RNG {
@@ -117,7 +118,7 @@ export class EngineSynth {
     this.pT = new Float32Array(MAXP); this.pDur = new Float32Array(MAXP); this.pAmp = new Float32Array(MAXP);
     this.pN = new Float32Array(MAXP); this.pBank = new Uint8Array(MAXP); this.pKind = new Uint8Array(MAXP); this.pLen = new Float32Array(MAXP);
     this.active = new Int16Array(MAXP); this.nActive = 0; this.free = []; for (let i = MAXP - 1; i >= 0; i--) this.free.push(i);
-    this.liftTime = 99; this.prevThr = 0; this.boost = 0; this.bov = 0; this.bovPh = 0; this.flutter = 0; this.flutPh = 0; this.b1 = 0; this.b2 = 0; this.spool2 = 0; this.turboPh2 = 0;
+    this.liftTime = 99; this.prevThr = 0; this.boost = 0; this.bov = 0; this.bovPh = 0; this.flutter = 0; this.flutPh = 0; this.b1 = 0; this.b2 = 0; this.spool2 = 0; this.turboPh2 = 0; this.flutEnv = 0; this.surge = 0; this.thrPeak = 0;
     this.heat = 0.5; this.whPh = 0; this.turboPh = 0; this.intakeEnv = 0; this.limCount = 0;
     this.limGain = 1; this.dc1x = 0; this.dc1y = 0; this.dc2x = 0; this.dc2y = 0;
     this.samples = new SampleLayer(sr);
@@ -140,9 +141,14 @@ export class EngineSynth {
     this.howl = (p.howl || []).map(() => new Biquad());
     this.b1 = this.b2 = this.boost = this.spool2 = 0;
     this.intBP = new Biquad(); this.intRes = new Biquad(); this.mechHP = new Biquad().set('hp', 2500, 0.7, sr);
-    this.floorBP = new Biquad(); this.blkBP = new Biquad().set('bp', p.blockF || 1600, 0.9, sr); this.blkBP2 = new Biquad().set('bp', (p.blockF || 1600) * 2.3, 1.2, sr); this.popLP = new Biquad().set('lp', p.popTone * 1.6, 0.6, sr);
+    this.floorBP = new Biquad(); this.blkBP = new Biquad().set('bp', p.blockF || 1600, 0.9, sr); this.blkBP2 = new Biquad().set('bp', (p.blockF || 1600) * 2.3, 1.2, sr); this.popLP = new Biquad().set('lp', p.popTone * 0.9, 0.6, sr);
+    // corpo dello scoppio: risonanza bassa/medio-bassa del terminale (tonfo pieno, non fruscio)
+    this.popBody = new Biquad().set('bp', p.popBody || Math.min(320, Math.max(120, p.popTone * 0.12)), 2.2, sr);
+    this.popBody2 = new Biquad().set('bp', (p.popBody || Math.min(320, Math.max(120, p.popTone * 0.12))) * 2.6, 3, sr);
     this.popBP = new Biquad().set('bp', p.popTone, 0.9, sr);
-    this.turbBP = new Biquad(); this.bovBP = new Biquad(); this.flutLP = new Biquad().set('lp', 900, 0.8, sr);
+    this.turbBP = new Biquad(); this.bovBP = new Biquad(); this.flutLP = new Biquad().set('lp', 1100, 0.7, sr); this.flutBP = new Biquad().set('bp', 2200, 1.2, sr);
+    // "tonfo" di pressione di ogni colpo del compressore in pompaggio
+    this.flutBody = new Biquad().set('bp', (p.turbo && p.turbo.flutBody) || 105, 3.5, sr);
     this.lowShelf = new Biquad().set('lowshelf', 90, 0.7, sr, 3);
     this.hpOut = new Biquad().set('hp', 22, 0.7, sr);
     this.lpOut = new Biquad().set('lp', 9000, 0.7, sr); this.lpOutR = new Biquad().set('lp', 9000, 0.7, sr);
@@ -208,12 +214,13 @@ export class EngineSynth {
   }
   spawnPop(delay, strength) {
     const sr = this.sr, bank = this.nb > 1 ? (this.rng.next() < 0.5 ? 0 : 1) : 0;
-    const micro = 1 + (this.rng.next() * 4 | 0);
+    // uno (a volte due) scoppi distinti: fronte morbido di qualche ms, coda breve, poco rumore
+    const micro = this.rng.next() < 0.3 ? 2 : 1;
     let t = delay;
     for (let k = 0; k < micro; k++) {
-      const a = strength * (k === 0 ? 1 : 0.35 + 0.5 * this.rng.next()) * (this.rng.next() < 0.5 ? 1 : -1) * 0.9;
-      this.spawn(1, -t, sr * (0.00025 + 0.0006 * this.rng.next()), a, Math.abs(a) * 0.9, bank, 3 + 6 * this.rng.next());
-      t += sr * (0.002 + 0.012 * this.rng.next());
+      const a = strength * (k === 0 ? 1 : 0.45 + 0.3 * this.rng.next()) * 1.1;
+      this.spawn(1, -t, sr * (0.0025 + 0.0035 * this.rng.next()), a, a * 0.10, bank, 2.2);
+      t += sr * (0.014 + 0.03 * this.rng.next());
     }
   }
 
@@ -222,7 +229,10 @@ export class EngineSynth {
     const idleF = Math.max(0, 1 - (rpm - p.idle) / (p.idle * 0.8));
     const overrun = this.thr < 0.04 && rpm > p.idle * 1.25;
     let comb;
-    if (overrun) comb = 0.10 + 0.04 * this.rng.next(); // solo pompaggio, iniezione tagliata
+    if (overrun) { // solo pompaggio, iniezione tagliata; "borbottio" = combustioni parziali irregolari
+      comb = 0.10 + 0.04 * this.rng.next();
+      if (p.burble && this.rng.next() < 0.35 * p.burble) comb += (0.15 + 0.25 * this.rng.next()) * p.burble;
+    }
     else comb = 0.24 + 0.76 * Math.pow(L, 0.8);
     // variabilità ciclo-ciclo (più forte al minimo, "lope" per camme spinte)
     const varAmt = 0.035 + (0.05 + 0.25 * p.lope) * idleF + 0.05 * (1 - L);
@@ -260,15 +270,30 @@ export class EngineSynth {
     const p = this.p, sr = this.sr, dt = n / sr;
     // aggiornamenti a blocco
     this.liftTime += dt;
-    if (this.tThr < 0.08 && this.prevThr >= 0.25) {
+    // durante il limitatore la farfalla "effettiva" va a pacchetti: per i trigger usiamo il valore trattenuto
+    this.thrHold = this.limiter ? Math.max(this.tThr, (this.thrHold || 0) - dt * 2) : this.tThr;
+    const thrE = this.thrHold;
+    if (thrE < 0.08 && this.prevThr >= 0.25) {
       this.liftTime = 0;
-      if (p.turbo && this.boost > 0.35) {
+      const fk = p.turbo && p.turbo.surge ? Math.min(1, 0.3 + this.boost * 1.3) : this.boost;
+      if (p.turbo && this.boost > (p.turbo.surge ? 0.15 : 0.35)) {
         if (p.turbo.bov === 'valve') this.bov = Math.min(1, this.boost * 1.1);
-        else if (p.turbo.bov === 'both') { this.bov = Math.min(1, this.boost * 1.15); this.flutter = Math.min(1, this.boost * 1.05); }
-        else this.flutter = this.boost;
+        else if (p.turbo.bov === 'both') { this.bov = Math.min(1, this.boost * 1.15); this.flutter = fk; }
+        else this.flutter = fk;
       }
     }
-    this.prevThr = this.tThr;
+    // sollevamento parziale (anche in folle tra una sgasata e l'altra): il compressore "chiacchiera"
+    this.thrPeak = Math.max(thrE, this.thrPeak - dt * 1.5);
+    if (p.turbo && p.turbo.surge && thrE >= 0.08 && this.thrPeak - thrE > 0.25 && this.boost > 0.15 && this.liftTime > 0.05) {
+      this.flutter = Math.max(this.flutter, Math.min(1, (0.25 + this.boost * 1.3) * (this.thrPeak - thrE) * 1.6) * p.turbo.surge); this.thrPeak = thrE;
+    }
+    // pompaggio leggero a gas parziale mentre la pressione sale
+    if (p.turbo && p.turbo.surge) {
+      const part = thrE > 0.12 && thrE < 0.8 ? Math.sin(Math.PI * (thrE - 0.12) / 0.68) : 0;
+      const tgtS = p.turbo.surge * 0.45 * part * Math.min(1, this.boost * 2.2) * Math.min(1, Math.max(0, (this.rpm - p.turbo.spoolStart) / 1200));
+      this.surge += (tgtS - this.surge) * Math.min(1, dt / 0.25);
+    }
+    this.prevThr = thrE;
     const heatT = 0.3 + 0.7 * this.load * Math.min(1, this.rpm / p.redline + 0.3);
     this.heat += (heatT - this.heat) * Math.min(1, dt / 4);
     if (p.turbo) {
@@ -292,7 +317,7 @@ export class EngineSynth {
 
     const aR = 1 - Math.exp(-1 / (sr * 0.012)), aL = 1 - Math.exp(-1 / (sr * 0.03)), aV = 1 - Math.exp(-1 / (sr * 0.15)), aG = 1 - Math.exp(-1 / (sr * 0.05));
     const rng = this.rng, nb = this.nb;
-    const bovDec = Math.exp(-1 / (sr * 0.32)), flDec = Math.exp(-1 / (sr * 0.45)), intDec = Math.exp(-1 / (sr * 0.006));
+    const bovDec = Math.exp(-1 / (sr * 0.32)), flDec = Math.exp(-1 / (sr * (p.turbo && p.turbo.flutDecay || 0.45))), flutDec = Math.exp(-1 / (sr * 0.016)), intDec = Math.exp(-1 / (sr * 0.006));
     const width = p.width, crossover = p.crossover;
     const bus = [0, 0], turb = [0, 0];
     const gainAll = p.gain * 0.55;
@@ -341,10 +366,10 @@ export class EngineSynth {
         else if (kind === 3) { blk += this.pAmp[i] * rng.bi() * (1 - u) * (1 - u); }
         else {
           // fronte ripido (apertura valvola, flusso critico) + coda esponenziale + depressione (scavenging)
-          if (u < 1) { const q = u * 7; v = q * Math.exp(1 - q) - 0.06 * u; }
+          if (u < 1) { const q = u * (kind === 1 ? 3.2 : 7); v = q * Math.exp(1 - q) - 0.06 * u; } // scoppi: fronte più morbido
           else if (u < 2) v = -0.30 * Math.sin(Math.PI * (u - 1));
           else v = 0;
-          const nz = this.pN[i] * rng.bi() * Math.exp(kind === 1 ? -0.8 * u : -3 * u);
+          const nz = this.pN[i] * rng.bi() * Math.exp(kind === 1 ? -4 * u : -3 * u);
           if (kind === 0) { bus[this.pBank[i]] += this.pAmp[i] * v; turb[this.pBank[i]] += nz; pulseSum += this.pAmp[i] * v; }
           else popBus += this.pAmp[i] * v + nz;
         }
@@ -361,7 +386,7 @@ export class EngineSynth {
       }
       if (nb > 1 && crossover > 0) { const a = h0, c = h1; h0 = a * (1 - crossover) + c * crossover; h1 = c * (1 - crossover) + a * crossover; }
       for (let b = 0; b < nb; b++) {
-        const h = (b === 0 ? h0 : h1) + popBus * 0.35;
+        const h = (b === 0 ? h0 : h1) + popBus * 0.6;
         const m = this.pipe[b].tick(h);
         const closed = (this.mufC2[b].tick(this.mufC1[b].tick(m)) + this.leakC[b].tick(m) * 0.3) * p.muffler.closedGain;
         const open = (this.mufO[b].tick(m) + this.leakO[b].tick(m) * 0.40) * p.muffler.openGain;
@@ -375,7 +400,8 @@ export class EngineSynth {
       if (howlG) { const hk = 0.55 + 0.45 * this.load + 0.4 * this.valve; for (let f = 0; f < this.howl.length; f++) fsum += this.howl[f].tick(exMono) * howlG[f] * hk; }
 
       // scoppiettii: parte che esce direttamente dal terminale
-      const pop = this.popLP.tick(popBus) * (0.25 + 0.55 * this.valve) + this.popBP.tick(popBus) * 0.25;
+      const pop = (this.popBody.tick(popBus) * 2.2 + this.popBody2.tick(popBus) * 0.6) * (0.55 + 0.45 * this.valve)
+        + this.popLP.tick(popBus) * (0.15 + 0.3 * this.valve) + this.popBP.tick(popBus) * 0.05;
 
       // --- aspirazione
       this.intakeEnv *= intDec;
@@ -403,10 +429,20 @@ export class EngineSynth {
           turbo += Math.sin(this.turboPh2 * 2.01) * p.turbo.whistle2 * 0.25 * sp;
         }
         if (this.bov > 0.002) { turbo += this.bovBP.tick(rng.bi()) * 0.22 * this.bov; this.bov *= bovDec; }
-        if (this.flutter > 0.002) {
-          this.flutPh += TAU * (14 + 10 * this.flutter) / sr;
-          const am = Math.max(0, Math.sin(this.flutPh)); turbo += this.flutLP.tick(rng.bi()) * 0.35 * this.flutter * am * am * am;
-          this.flutter *= flDec;
+        const fl = Math.max(this.flutter, this.surge);
+        if (fl > 0.002 || this.flutEnv > 0.001) {
+          // treno di colpi d'aria a 13-25 Hz ("tu-tu-tu"): ogni colpo = soffio + tonfo di pressione
+          const rLo = p.turbo.flutRate ? p.turbo.flutRate[0] : 13, rHi = p.turbo.flutRate ? p.turbo.flutRate[1] : 24;
+          this.flutPh += (rLo + (rHi - rLo) * fl) * (1 + 0.08 * rng.bi()) / sr;
+          let kick = 0;
+          if (this.flutPh >= 1 && fl > 0.002) { this.flutPh -= 1; this.flutEnv = fl * (0.7 + 0.6 * rng.next()); kick = this.flutEnv; }
+          else if (this.flutPh >= 1) this.flutPh -= 1;
+          const env = this.flutEnv; this.flutEnv *= flutDec;
+          const nz = rng.bi();
+          const fg = FLUT_G * (p.turbo.flutGain || 1);
+          turbo += (this.flutLP.tick(nz) * 0.8 + this.flutBP.tick(nz) * 0.12) * env * fg;
+          turbo += this.flutBody.tick(env * (1 + 0.3 * nz) + kick * 4) * 2.5 * fg;
+          this.flutter *= this.flutter < 0.06 ? flDec * flDec * flDec : flDec;
         }
       }
 
