@@ -1,13 +1,13 @@
 // Rombo — logica dell'app: audio, sorgenti velocità (GPS / simulazione), cambio, interfaccia.
 import { PRESETS, PRESET_ORDER, SAMPLE_SETS } from './presets.js';
-import { Drivetrain, SimVehicle } from './drivetrain.js';
+import { Drivetrain, SimVehicle, GpsTracker } from './drivetrain.js';
 import { EngineSynth } from './engine-core.js';
 
 const $ = (s) => document.querySelector(s);
 const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
 
 // ---------------- impostazioni persistenti
-const DEF = { v: 2, preset: 'i6tt', mode: 'comfort', valve: false, volume: 0.8, source: 'sim', thr: 1, sens: 1, hybrid: false, media: true, route: false };
+const DEF = { v: 2, preset: 'i6tt', mode: 'comfort', valve: false, volume: 0.8, source: 'sim', thr: 1, sens: 1, hybrid: false, media: true, route: false, width: 0.6, bass: 0, treble: 0 };
 const S = Object.assign({}, DEF, JSON.parse(localStorage.getItem('rombo') || '{}'));
 if (S.v !== 2 || !PRESETS[S.preset]) { S.v = 2; S.preset = 'i6tt'; } // nuovo motore predefinito
 const save = () => localStorage.setItem('rombo', JSON.stringify(S));
@@ -15,7 +15,7 @@ const save = () => localStorage.setItem('rombo', JSON.stringify(S));
 // ---------------- stato
 const dtr = new Drivetrain(PRESETS[S.preset]); dtr.mode = S.mode;
 const sim = new SimVehicle(dtr);
-let ctx = null, node = null, spSynth = null, running = false, startT = 0, wakeLock = null, msDest = null;
+let ctx = null, comp = null, node = null, spSynth = null, running = false, startT = 0, wakeLock = null, msDest = null;
 let gas = false, brake = false, neutral = false, kbGas = false, kbBrake = false;
 let state = { rpm: 0, gear: 'N', load: 0, throttle: 0, limiter: false, shifting: false, events: [] };
 let speed = 0; // m/s mostrata
@@ -47,9 +47,23 @@ async function startAudio() {
     sp.onaudioprocess = (ev) => { const b = ev.outputBuffer; spSynth.process(b.getChannelData(0), b.getChannelData(1), b.length); };
     out = sp; window.__sp = sp;
   }
-  window.__out = out;
+  // uscita stereo esplicita (2 canali, interpretazione "speakers"): l'auto riceve L/R veri e li distribuisce
+  // su tutti gli altoparlanti invece di un segnale mono che finisce nel solo canale centrale
+  const two = (n) => { try { n.channelCount = 2; n.channelCountMode = 'explicit'; n.channelInterpretation = 'speakers'; } catch (_) {} };
+  try { ctx.destination.channelCount = Math.min(2, ctx.destination.maxChannelCount || 2); } catch (_) {}
+  two(ctx.destination);
+  // compressore dolce al posto di livelli "duri": più volume percepito senza distorsione
+  comp = ctx.createDynamicsCompressor();
+  comp.threshold.value = -14; comp.knee.value = 12; comp.ratio.value = 2.5; comp.attack.value = 0.006; comp.release.value = 0.22;
+  two(comp);
+  const makeup = ctx.createGain(); makeup.gain.value = 1.25; two(makeup);
+  out.connect(comp); comp.connect(makeup);
+  window.__out = makeup; window.__engineOut = out;
   connectOutput();
+  post({ type: 'params', p: { width: S.width, bass: S.bass, treble: S.treble } });
   if (ctx.state !== 'running') await ctx.resume();
+  // fallback: se il contesto non parte (criteri autoplay), prova l'instradamento tramite elemento <audio>
+  if (ctx.state !== 'running' && !S.route) { S.route = true; connectOutput(); }
   if (S.hybrid) await loadLoops();
 }
 
@@ -58,7 +72,7 @@ function connectOutput() {
   try { out.disconnect(); } catch (_) {}
   const el = $('#mediaEl');
   if (S.route) {
-    msDest = msDest || ctx.createMediaStreamDestination();
+    if (!msDest) { msDest = ctx.createMediaStreamDestination(); try { msDest.channelCount = 2; msDest.channelCountMode = 'explicit'; } catch (_) {} }
     out.connect(msDest); el.srcObject = msDest.stream; el.play().catch(() => {});
   } else {
     out.connect(ctx.destination);
@@ -135,13 +149,13 @@ async function toggleEngine() {
 
 // ---------------- GPS
 const gps = {
-  id: null, v: 0, a: 0, t: 0, last: null, acc: null, ok: false, err: '',
+  id: null, v: 0, a: 0, t: 0, last: null, acc: null, ok: false, err: '', tr: new GpsTracker(),
   start() {
     if (this.id !== null || !('geolocation' in navigator)) { if (!('geolocation' in navigator)) this.err = 'GPS non disponibile'; return; }
     this.id = navigator.geolocation.watchPosition((p) => this.onPos(p), (e) => { this.err = e.message || 'errore GPS'; this.ok = false; },
       { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 });
   },
-  stop() { if (this.id !== null) navigator.geolocation.clearWatch(this.id); this.id = null; this.ok = false; },
+  stop() { if (this.id !== null) navigator.geolocation.clearWatch(this.id); this.id = null; this.ok = false; this.tr.reset(); },
   onPos(p) {
     const t = p.timestamp / 1000, c = p.coords;
     let s = c.speed;
@@ -152,14 +166,10 @@ const gps = {
       const dt = t - this.last.timestamp / 1000; s = dt > 0 ? 2 * R * Math.asin(Math.sqrt(h)) / dt : 0;
     }
     s = Math.max(0, s || 0);
-    if (this.ok && t > this.t) {
-      const dt = t - this.t, aRaw = clamp((s - this.v) / dt, -12, 12);
-      this.a += (aRaw - this.a) * Math.min(1, dt / 0.5);
-    }
-    this.v = s; this.t = t; this.last = p; this.acc = c.accuracy; this.ok = true; this.err = ''; this.rx = performance.now() / 1000;
+    this.tr.fix(t, s, performance.now() / 1000);
+    this.v = this.tr.v; this.a = this.tr.a;
+    this.t = t; this.last = p; this.acc = c.accuracy; this.ok = true; this.err = ''; this.rx = performance.now() / 1000;
   },
-  // velocità stimata tra un fix e l'altro (predizione lineare breve)
-  speedNow() { if (!this.ok) return 0; const dt = Math.min(1.0, performance.now() / 1000 - this.rx); return Math.max(0, this.v + this.a * dt); },
 };
 
 // ---------------- cambio manuale
@@ -180,13 +190,9 @@ function tick() {
     throttle = (gas || kbGas) ? S.thr : 0;
     v = sim.update(dt, throttle, (brake || kbBrake) ? 1 : 0, neutral, state);
   } else {
-    v = gps.speedNow();
-    // carico dal'accelerazione: quanta parte dell'accelerazione massima della marcia viene usata
-    const g = Math.max(1, dtr.gear), coast = 0.25 + 0.0004 * v * v;
-    const aMax = dtr.maxAccel(v, g);
-    const tgt = v < 0.4 && gps.a < 0.2 ? 0 : clamp((gps.a + coast) / aMax * S.sens, 0, 1);
-    gpsLoad += (tgt - gpsLoad) * Math.min(1, dt / 0.25);
-    throttle = gps.a < -0.4 ? 0 : gpsLoad;
+    // velocità continua tra i fix (niente giri "a scalini") e carico stimato con soglia minima e isteresi
+    v = gps.tr.smooth(dt, now);
+    throttle = gpsLoad = gps.tr.update(dt, v, dtr, S.sens);
     neu = false;
   }
   speed = v;
@@ -204,10 +210,10 @@ function tick() {
     $('#warmStatus').textContent = warm >= 1 ? 'motore caldo' : `in temperatura ${Math.round(warm * 100)}%`;
   } else { state = { rpm: 0, gear: '–', load: 0 }; }
   const src = $('#srcStatus');
-  if (S.source === 'gps') src.textContent = gps.ok ? `GPS ±${Math.round(gps.acc || 0)} m · ${(gps.a).toFixed(1)} m/s²` : (gps.err || 'GPS: in attesa del segnale…');
+  if (S.source === 'gps') src.textContent = gps.ok ? `GPS ±${Math.round(gps.acc || 0)} m · ${(gps.tr.a).toFixed(1)} m/s² · carico ${Math.round(gpsLoad * 100)}%` : (gps.err || 'GPS: in attesa del segnale…');
   else src.textContent = 'Simulazione';
 }
-setInterval(tick, 20);
+setInterval(tick, 16); // ~60 Hz: parametri continui verso il worklet (che li smussa campione per campione)
 
 // ---------------- contagiri
 const cv = $('#gauge'), g2 = cv.getContext('2d');
@@ -281,6 +287,12 @@ $('#startBtn').onclick = toggleEngine;
 $('#valveBtn').onclick = () => { S.valve = !S.valve; save(); renderSeg(); };
 $('#neutralBtn').onclick = () => { neutral = !neutral; renderSeg(); };
 $('#upBtn').onclick = shiftUp; $('#downBtn').onclick = shiftDown;
+const wid = $('#width'), bas = $('#bass'), tre = $('#treble');
+const toneUI = () => { $('#widthVal').textContent = Math.round(S.width * 100) + '%'; $('#bassVal').textContent = (S.bass > 0 ? '+' : '') + S.bass + ' dB'; $('#trebleVal').textContent = (S.treble > 0 ? '+' : '') + S.treble + ' dB'; };
+wid.value = S.width; bas.value = S.bass; tre.value = S.treble; toneUI();
+wid.oninput = () => { S.width = +wid.value; save(); toneUI(); post({ type: 'params', p: { width: S.width } }); };
+bas.oninput = () => { S.bass = +bas.value; save(); toneUI(); post({ type: 'params', p: { bass: S.bass } }); };
+tre.oninput = () => { S.treble = +tre.value; save(); toneUI(); post({ type: 'params', p: { treble: S.treble } }); };
 const vol = $('#vol'); vol.value = S.volume; vol.oninput = () => { S.volume = +vol.value; save(); };
 const thr = $('#thr'); thr.value = S.thr; thr.oninput = () => { S.thr = +thr.value; save(); renderSeg(); };
 const sens = $('#sens'); sens.value = S.sens; sens.oninput = () => { S.sens = +sens.value; save(); renderSeg(); };
@@ -307,4 +319,4 @@ renderSeg();
 if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch((e) => console.warn('SW', e));
 
 // hook per i test automatici
-window.__rombo = { S, dtr, get state() { return state; }, get ctx() { return ctx; }, get node() { return node; }, gps };
+window.__rombo = { S, dtr, get comp() { return comp; }, get state() { return state; }, get ctx() { return ctx; }, get node() { return node; }, gps };
