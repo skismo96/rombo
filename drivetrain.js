@@ -32,8 +32,7 @@ export class Drivetrain {
   shiftPoints(load) {
     const p = this.p, R = p.redline, I = p.idle;
     if (this.mode === 'dynamic') return { up: lerp(0.55 * R, 0.97 * R, clamp(load, 0, 1)), down: lerp(0.30 * R, 0.55 * R, load) };
-    // comfort: cambiate dolci ma con il motore sempre "vivo" (mai sotto ~2000 giri in marcia costante)
-    return { up: lerp(Math.max(I * 2.9, 0.37 * R), 0.72 * R, clamp(load, 0, 1)), down: lerp(Math.max(I * 1.9, 0.24 * R), 0.36 * R, load) };
+    return { up: lerp(Math.max(I * 2.1, 0.27 * R), 0.70 * R, clamp(load, 0, 1)), down: lerp(I * 1.35, 0.30 * R, load) };
   }
   requestShift(dir) { // cambio manuale (+1/-1)
     const g = this.gear + dir;
@@ -122,48 +121,5 @@ export class SimVehicle {
     F -= brake * 9 * m;
     this.v = Math.max(0, this.v + F / m * dt);
     return this.v;
-  }
-}
-
-// Stima di velocità/accelerazione/carico dai fix GPS (≈1 Hz, rumorosi).
-// Filtro alfa-beta sulla velocità, carico con soglia minima mentre si viaggia (così in marce alte e a velocità
-// costante il motore resta "in tiro" e non va in rilascio per il rumore del GPS), rilascio con isteresi.
-export class GpsTracker {
-  constructor() { this.reset(); }
-  reset() { this.v = 0; this.a = 0; this.t = null; this.rx = 0; this.ok = false; this.load = 0; this.lift = false; this.last = null; }
-  // t = timestamp del fix (s), s = velocità misurata (m/s), now = orologio locale (s)
-  fix(t, s, now) {
-    s = Math.max(0, s || 0);
-    if (!this.ok || this.t === null || t <= this.t || t - this.t > 5) { this.v = s; this.a = 0; }
-    else {
-      // guadagni alfa-beta smorzati criticamente, dipendenti dall'intervallo tra i fix (1 Hz o 10 Hz danno la stessa banda)
-      const dt = t - this.t, vp = Math.max(0, this.v + this.a * dt), r = s - vp;
-      const al = 1 - Math.exp(-dt / 0.9), be = Math.max(0, 2 * (2 - al) - 4 * Math.sqrt(1 - al));
-      this.v = Math.max(0, vp + al * r);
-      this.a = clamp(this.a + be * r / dt, -9, 9);
-      if (this.v < 0.3 && s < 0.3) this.a *= 0.5;
-    }
-    this.t = t; this.rx = now; this.ok = true;
-  }
-  speedNow(now) { if (!this.ok) return 0; const dt = Math.min(1.2, now - this.rx); return Math.max(0, this.v + this.a * dt * 0.8); }
-  // velocità continua per il motore: segue la stima con avanzamento dato dall'accelerazione (nessun gradino ai fix)
-  smooth(dt, now) {
-    if (!this.ok) { this.vs = 0; return 0; }
-    if (this.vs === undefined) this.vs = this.v;
-    const tgt = this.speedNow(now);
-    const ff = Math.min(1.2, now - this.rx) < 1.2 ? this.a * 0.8 : 0;
-    this.vs = Math.max(0, this.vs + ff * dt + (tgt - this.vs) * Math.min(1, dt / 0.45));
-    return this.vs;
-  }
-  // carico richiesto 0..1 (usato come "farfalla") per la marcia corrente
-  update(dt, v, dtr, sens = 1) {
-    const g = Math.max(1, dtr.gear), coast = 0.25 + 0.0004 * v * v, aMax = dtr.maxAccel(v, g), a = this.a;
-    let tgt = v < 0.4 && a < 0.2 ? 0 : clamp((a + coast) / aMax * sens, 0, 1);
-    // isteresi rilascio: solo con decelerazione netta (rigenerazione/frenata), non per il rumore del GPS
-    if (this.lift) { if (a > -0.45 || v < 1) this.lift = false; } else if (a < -1.0 && v > 3) this.lift = true;
-    if (!this.lift && v > 2) tgt = Math.max(tgt, 0.22 + 0.08 * Math.min(1, v / 30)); // marcia costante = motore in leggero tiro
-    const tau = tgt > this.load ? 0.35 : 0.7;
-    this.load += (tgt - this.load) * Math.min(1, dt / tau);
-    return this.lift ? 0 : this.load;
   }
 }

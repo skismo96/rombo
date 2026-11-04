@@ -32,12 +32,6 @@ class Biquad {
         b0 = A * ((A + 1) - (A - 1) * c + sq); b1 = 2 * A * ((A - 1) - (A + 1) * c); b2 = A * ((A + 1) - (A - 1) * c - sq);
         a0 = (A + 1) + (A - 1) * c + sq; a1 = -2 * ((A - 1) + (A + 1) * c); a2 = (A + 1) + (A - 1) * c - sq; break;
       }
-      case 'highshelf': {
-        const sq = 2 * Math.sqrt(A) * al;
-        b0 = A * ((A + 1) + (A - 1) * c + sq); b1 = -2 * A * ((A - 1) + (A + 1) * c); b2 = A * ((A + 1) + (A - 1) * c - sq);
-        a0 = (A + 1) - (A - 1) * c + sq; a1 = 2 * ((A - 1) - (A + 1) * c); a2 = (A + 1) - (A - 1) * c - sq; break;
-      }
-      case 'ap': b0 = 1 - al; b1 = -2 * c; b2 = 1 + al; a0 = 1 + al; a1 = -2 * c; a2 = 1 - al; break;
       default: b0 = 1; b1 = 0; b2 = 0; a0 = 1; a1 = 0; a2 = 0;
     }
     this.b0 = b0 / a0; this.b1 = b1 / a0; this.b2 = b2 / a0; this.a1 = a1 / a0; this.a2 = a2 / a0;
@@ -118,7 +112,7 @@ export class EngineSynth {
     // stato di controllo (target dal thread principale) e valori smussati
     this.tRpm = 800; this.tLoad = 0; this.tThr = 0; this.tValve = 0; this.tVol = 0.8;
     this.rpm = 800; this.load = 0; this.thr = 0; this.valve = 0; this.vol = 0.8;
-    this.on = true; this.limiter = false; this.width = 0.6; this.bassDb = 0; this.trebleDb = 0; this.warm = 1; this.hybrid = 0; this.engineGain = 0; this.tEngineGain = 1;
+    this.on = true; this.limiter = false; this.warm = 1; this.hybrid = 0; this.engineGain = 0; this.tEngineGain = 1;
     this.phase = 0; this.next = 0; this.cycle = 0;
     // pool impulsi
     this.pT = new Float32Array(MAXP); this.pDur = new Float32Array(MAXP); this.pAmp = new Float32Array(MAXP);
@@ -155,14 +149,10 @@ export class EngineSynth {
     this.turbBP = new Biquad(); this.bovBP = new Biquad(); this.flutLP = new Biquad().set('lp', 1100, 0.7, sr); this.flutBP = new Biquad().set('bp', 2200, 1.2, sr);
     // "tonfo" di pressione di ogni colpo del compressore in pompaggio
     this.flutBody = new Biquad().set('bp', (p.turbo && p.turbo.flutBody) || 105, 3.5, sr);
-    // uscita: passa-alto 38 Hz (niente sub-bassi che impastano gli altoparlanti delle portiere), poi EQ "Tono"
-    this.hpOut = [new Biquad().set('hp', 38, 0.7, sr), new Biquad().set('hp', 38, 0.7, sr)];
-    this.lpOut = [new Biquad().set('lp', 12500, 0.7, sr), new Biquad().set('lp', 12500, 0.7, sr)];
-    this.toneLo = [new Biquad(), new Biquad()]; this.toneHi = [new Biquad(), new Biquad()]; this.presence = [new Biquad(), new Biquad()];
-    // stereo: decorrelazione a fase (catena di passa-tutto) aggiunta solo al canale "laterale" (M/S) => somma mono invariata
-    this.apS = [170, 430, 1050, 2400, 5200].map(f => new Biquad().set('ap', f, 0.6, sr));
-    this.hpS = new Biquad().set('hp', 160, 0.7, sr);
-    this.setTone();
+    this.lowShelf = new Biquad().set('lowshelf', 90, 0.7, sr, 3);
+    this.hpOut = new Biquad().set('hp', 22, 0.7, sr);
+    this.lpOut = new Biquad().set('lp', 9000, 0.7, sr); this.lpOutR = new Biquad().set('lp', 9000, 0.7, sr);
+    this.hpOutR = new Biquad().set('hp', 22, 0.7, sr); this.lowShelfR = new Biquad().set('lowshelf', 90, 0.7, sr, 3);
     this.runnerS = p.runner.map(l => l / 520 * sr);
     this.cylGain = p.cylVar.slice();
     this.jit = new Float32Array(p.cyl);
@@ -172,15 +162,6 @@ export class EngineSynth {
   }
 
   setLoops(loops) { this.samples.setLoops(loops); }
-
-  setTone() {
-    const sr = this.sr;
-    for (let c = 0; c < 2; c++) {
-      this.toneLo[c].set('lowshelf', 110, 0.7, sr, 1 + this.bassDb);
-      this.toneHi[c].set('highshelf', 4500, 0.7, sr, 1 + this.trebleDb);
-      this.presence[c].set('peak', 2900, 0.9, sr, 3.5); // presenza 2-5 kHz: definizione anche a volume basso e in auto
-    }
-  }
 
   set(params) {
     if (params.rpm !== undefined) this.tRpm = params.rpm;
@@ -192,10 +173,6 @@ export class EngineSynth {
     if (params.warm !== undefined) this.warm = params.warm;
     if (params.hybrid !== undefined) this.hybrid = params.hybrid;
     if (params.on !== undefined) this.tEngineGain = params.on ? 1 : 0;
-    if (params.width !== undefined) this.width = Math.max(0, Math.min(1, params.width));
-    if (params.bass !== undefined || params.treble !== undefined) {
-      if (params.bass !== undefined) this.bassDb = params.bass; if (params.treble !== undefined) this.trebleDb = params.treble; this.setTone();
-    }
   }
 
   // evento: cambiata in Dynamic sotto carico => taglio accensione con "schiocco"
@@ -213,9 +190,9 @@ export class EngineSynth {
       this.header[b].D = Math.max(2, 2 * p.header.len * lenVar / c * sr); this.header[b].r = p.header.refl; this.header[b].setLoss(3500);
       this.pipe[b].D = Math.max(2, 2 * p.pipe.len * lenVar / c * sr); this.pipe[b].r = p.pipe.refl; this.pipe[b].setLoss(1400 + 1200 * this.valve);
       this.turbF[b].set('bp', 700 + rpm * 0.18, 0.8, sr);
-      const cl = p.muffler.closedLP * (1.2 + 0.4 * this.load) + rpm * 0.09; // valvola chiusa: più scuro, ma non "ovattato"
+      const cl = p.muffler.closedLP * (0.85 + 0.35 * this.load);
       this.mufC1[b].set('lp', cl, 0.75, sr); this.mufC2[b].set('lp', cl * 1.6, 0.6, sr);
-      this.mufO[b].set('lp', p.muffler.openLP * (0.95 + 0.3 * this.load) + rpm * 0.1, 0.7, sr);
+      this.mufO[b].set('lp', p.muffler.openLP * (0.8 + 0.4 * this.load), 0.7, sr);
       this.leakC[b].set('bp', 1800 + 600 * this.load, 0.5, sr); this.leakO[b].set('bp', 2600 + 900 * this.load, 0.5, sr);
     }
     p.formants.forEach((f, i) => this.form[i].set('bp', f.f * (1 + 0.04 * this.heat), f.q, sr));
@@ -338,7 +315,7 @@ export class EngineSynth {
     }
     if (++this.blockCount % 2 === 0) this.updateFilters();
 
-    const aR = 1 - Math.exp(-1 / (sr * 0.025)), aL = 1 - Math.exp(-1 / (sr * 0.05)), aV = 1 - Math.exp(-1 / (sr * 0.15)), aG = 1 - Math.exp(-1 / (sr * 0.05));
+    const aR = 1 - Math.exp(-1 / (sr * 0.012)), aL = 1 - Math.exp(-1 / (sr * 0.03)), aV = 1 - Math.exp(-1 / (sr * 0.15)), aG = 1 - Math.exp(-1 / (sr * 0.05));
     const rng = this.rng, nb = this.nb;
     const bovDec = Math.exp(-1 / (sr * 0.32)), flDec = Math.exp(-1 / (sr * (p.turbo && p.turbo.flutDecay || 0.45))), flutDec = Math.exp(-1 / (sr * 0.016)), intDec = Math.exp(-1 / (sr * 0.006));
     const width = p.width, crossover = p.crossover;
@@ -478,19 +455,12 @@ export class EngineSynth {
 
       const eg = this.engineGain * gainAll;
       const synthEx = (1 - hy * 0.85);
-      let L = ((exL + fsum) * synthEx + pop + intake * 1.15 + mechOut + turbo * 0.8) * eg + smp * hy * eg;
-      let R = ((exR + fsum) * synthEx + pop + intake * 0.75 + mechOut * 0.95 + turbo * 1.2) * eg + smp * hy * eg;
+      let L = ((exL + fsum) * synthEx + pop + intake + mechOut + turbo) * eg + smp * hy * eg;
+      let R = ((exR + fsum) * synthEx + pop + intake * 0.9 + mechOut * 0.9 + turbo) * eg + smp * hy * eg;
 
-      // --- uscita: EQ, immagine stereo larga ma compatibile mono, saturazione morbida, limitatore
-      L = this.presence[0].tick(this.toneHi[0].tick(this.toneLo[0].tick(this.lpOut[0].tick(this.hpOut[0].tick(L)))));
-      R = this.presence[1].tick(this.toneHi[1].tick(this.toneLo[1].tick(this.lpOut[1].tick(this.hpOut[1].tick(R)))));
-      {
-        const M = 0.5 * (L + R); let Sd = M;
-        for (let a = 0; a < this.apS.length; a++) Sd = this.apS[a].tick(Sd);
-        Sd = this.hpS.tick(Sd) * this.width * 0.85;
-        const S0 = 0.5 * (L - R) * (0.6 + 0.8 * this.width);
-        L = M + S0 + Sd; R = M - S0 - Sd;
-      }
+      // --- uscita: EQ abitacolo, saturazione morbida, limitatore
+      L = this.lowShelf.tick(this.hpOut.tick(L)); R = this.lowShelfR.tick(this.hpOutR.tick(R));
+      L = this.lpOut.tick(L); R = this.lpOutR.tick(R);
       const d = p.drive;
       L = Math.tanh(L * d) / d * 1.1; R = Math.tanh(R * d) / d * 1.1;
       L *= this.vol; R *= this.vol;
