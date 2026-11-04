@@ -39,3 +39,6 @@ summary { cursor:pointer; padding:1vh 0; }
 }
 #shiftRow.dim button { opacity:.55; }
 #presetSeg { display:grid; grid-template-columns:repeat(3,1fr); }
+
+.log { white-space:pre-wrap; font-size:clamp(11px,1.4vh,16px); color:var(--dim); max-height:30vh; overflow:auto; background:#0b0d10; padding:.6em; border-radius:8px; }
+#logPanel summary { color:var(--dim); cursor:pointer; padding:.5em 0; }

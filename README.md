@@ -14,6 +14,8 @@ Il suono segue la velocità e l'accelerazione misurate dal GPS. È un progetto o
    Funzionano anche i tasti multimediali traccia successiva/precedente, quando l'opzione "sessione multimediale" è attiva.
    In Comfort o Dynamic, il primo cambio manuale passa automaticamente alla modalità Manuale.
 8. In **Altre impostazioni** trovi: la sensibilità del carico GPS, il suono ibrido sperimentale con registrazioni CC0 (solo 4 cilindri) e le opzioni multimediali.
+9. **Modalità sicura** (in Altre impostazioni): grafo audio minimo, senza EQ/allargamento stereo né elementi media. Usala se il browser dell'auto ha problemi. Il **Registro errori** mostra eventuali errori: fanne uno screenshot.
+   L'app non modifica mai il volume dell'auto: il cursore Volume agisce solo sul suono del motore.
 
 Serve **HTTPS** perché il browser conceda la geolocalizzazione e il service worker. In locale invece basta un server statico:
 

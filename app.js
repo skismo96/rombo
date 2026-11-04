@@ -1,15 +1,16 @@
 // Rombo — logica dell'app: audio, sorgenti velocità (GPS / simulazione), cambio, interfaccia.
 import { PRESETS, PRESET_ORDER, SAMPLE_SETS } from './presets.js';
-import { Drivetrain, SimVehicle } from './drivetrain.js';
+import { Drivetrain, SimVehicle, GpsTracker } from './drivetrain.js';
 import { EngineSynth } from './engine-core.js';
 
 const $ = (s) => document.querySelector(s);
 const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
 
 // ---------------- impostazioni persistenti
-const DEF = { v: 2, preset: 'i6tt', mode: 'comfort', valve: false, volume: 0.8, source: 'sim', thr: 1, sens: 1, hybrid: false, media: true, route: false };
+const DEF = { v: 3, preset: 'i6tt', mode: 'comfort', valve: false, volume: 0.8, source: 'sim', thr: 1, sens: 1, hybrid: false, media: false, route: false, width: 0.6, bass: 0, treble: 0, safe: false };
 const S = Object.assign({}, DEF, JSON.parse(localStorage.getItem('rombo') || '{}'));
-if (S.v !== 2 || !PRESETS[S.preset]) { S.v = 2; S.preset = 'i6tt'; } // nuovo motore predefinito
+if ((S.v !== 2 && S.v !== 3) || !PRESETS[S.preset]) S.preset = 'i6tt'; // nuovo motore predefinito
+if (S.v !== 3) { S.v = 3; S.media = false; S.route = false; } // v3: elemento media disattivato di default (volume auto)
 const save = () => localStorage.setItem('rombo', JSON.stringify(S));
 
 // ---------------- stato
@@ -31,39 +32,62 @@ function post(msg) {
   }
 }
 
+// ---------------- registro errori a schermo (per fare uno screenshot in auto)
+const logLines = [];
+function log(msg, err = false) {
+  const t = new Date().toLocaleTimeString('it-IT');
+  logLines.push((err ? '⚠ ' : '') + t + ' ' + msg); if (logLines.length > 60) logLines.shift();
+  const el = document.getElementById('logBox'); if (el) el.textContent = logLines.join('\n');
+  if (err) { const d = document.getElementById('logPanel'); if (d) d.open = true; }
+  try { (err ? console.warn : console.log)('[rombo] ' + msg); } catch (_) {}
+}
+window.addEventListener('error', (e) => log('Errore: ' + e.message + (e.filename ? ' (' + e.filename.split('/').pop() + ':' + e.lineno + ')' : ''), true));
+window.addEventListener('unhandledrejection', (e) => log('Promessa rifiutata: ' + (e.reason && e.reason.message || e.reason), true));
+log('Rombo avviato · ' + navigator.userAgent.replace(/^Mozilla\/5\.0 /, ''));
+
 async function startAudio() {
   const AC = window.AudioContext || window.webkitAudioContext;
-  ctx = new AC({ latencyHint: 'interactive' });
+  if (!AC) throw new Error('Web Audio non disponibile');
+  // un solo AudioContext per tutta la sessione, con le opzioni predefinite del dispositivo (frequenza, latenza)
+  ctx = new AC();
+  log('AudioContext: ' + ctx.sampleRate + ' Hz, uscite max ' + (ctx.destination.maxChannelCount || '?') + ', stato ' + ctx.state);
+  ctx.onstatechange = () => log('AudioContext → ' + ctx.state);
   let out;
   try {
     if (!ctx.audioWorklet) throw new Error('no worklet');
     await ctx.audioWorklet.addModule('engine-worklet.js');
     node = new AudioWorkletNode(ctx, 'rombo-engine', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2], processorOptions: { preset: S.preset } });
+    node.onprocessorerror = (ev) => log('Errore nel processore audio: ' + (ev.message || 'sconosciuto'), true);
     out = node;
   } catch (e) {
-    console.warn('AudioWorklet non disponibile, uso ScriptProcessor', e);
+    log('AudioWorklet non disponibile, uso ScriptProcessor: ' + e.message, true);
     spSynth = new EngineSynth(ctx.sampleRate, PRESETS[S.preset], (Math.random() * 1e9) | 0);
     const sp = ctx.createScriptProcessor(1024, 0, 2);
     sp.onaudioprocess = (ev) => { const b = ev.outputBuffer; spSynth.process(b.getChannelData(0), b.getChannelData(1), b.length); };
     out = sp; window.__sp = sp;
   }
+  // Grafo minimo e conservativo: motore (stereo generato DENTRO il worklet) → uscita. Nessuna modifica alla
+  // configurazione dei canali di ctx.destination, nessun nodo nativo aggiuntivo. Il volume dell'app è solo interno.
   window.__out = out;
   connectOutput();
+  post({ type: 'params', p: { width: S.width, bass: S.bass, treble: S.treble, lite: S.safe } });
   if (ctx.state !== 'running') await ctx.resume();
-  if (S.hybrid) await loadLoops();
+  if (S.hybrid && !S.safe) await loadLoops().catch((e) => log('Campioni non caricati: ' + e.message, true));
 }
 
 function connectOutput() {
   const out = window.__out; if (!out) return;
   try { out.disconnect(); } catch (_) {}
   const el = $('#mediaEl');
-  if (S.route) {
+  // NB: non si imposta MAI volume/muted di un elemento <audio>: in Tesla è legato al volume generale dell'auto
+  if (S.route && !S.safe) {
     msDest = msDest || ctx.createMediaStreamDestination();
-    out.connect(msDest); el.srcObject = msDest.stream; el.play().catch(() => {});
+    out.connect(msDest); el.srcObject = msDest.stream; el.play().catch((e) => log('Riproduzione media: ' + e.message, true));
+    log('Uscita: tramite elemento media');
   } else {
     out.connect(ctx.destination);
-    if (el.srcObject) el.srcObject = null;
-    if (S.media) setupSilentMedia();
+    if (el.srcObject) { el.pause(); el.srcObject = null; }
+    if (S.media && !S.safe) setupSilentMedia();
   }
 }
 
@@ -93,10 +117,10 @@ function silentWavUrl() {
 let silentUrl = null;
 function setupSilentMedia() {
   const el = $('#mediaEl');
-  if (!S.media) { el.pause(); return; }
+  if (!S.media || S.safe) { if (!el.srcObject) el.pause(); return; }
+  // file WAV di silenzio digitale: nessuna necessità di abbassarne il volume (mai toccare el.volume/el.muted)
   if (!el.srcObject) { silentUrl = silentUrl || silentWavUrl(); if (el.src !== silentUrl) el.src = silentUrl; el.loop = true; }
-  el.volume = 0.01;
-  el.play().catch(() => {});
+  el.play().catch((e) => log('Media Session: ' + e.message, true));
   if ('mediaSession' in navigator) {
     try {
       navigator.mediaSession.metadata = new MediaMetadata({ title: 'Rombo', artist: PRESETS[S.preset].name, album: 'Motore virtuale' });
@@ -119,13 +143,18 @@ async function toggleEngine() {
   const btn = $('#startBtn');
   if (!running) {
     btn.disabled = true;
-    try { if (!ctx) await startAudio(); else await ctx.resume(); } catch (e) { console.error(e); alert('Audio non disponibile: ' + e.message); btn.disabled = false; return; }
+    try { if (!ctx) await startAudio(); else await ctx.resume(); }
+    catch (e) {
+      log('Avvio audio fallito: ' + (e && e.message || e), true);
+      try { if (ctx) ctx.close(); } catch (_) {} ctx = null; node = null; spSynth = null; window.__out = null;
+      btn.disabled = false; return;
+    }
     running = true; startT = performance.now() / 1000; btn.disabled = false;
     post({ type: 'params', p: { on: true } });
     btn.textContent = 'SPEGNI MOTORE'; btn.classList.add('on');
     requestWake();
     if (S.source === 'gps') gps.start();
-    if (S.media && !S.route) setupSilentMedia();
+    if (S.media && !S.route && !S.safe) setupSilentMedia();
   } else {
     running = false; post({ type: 'params', p: { on: false } });
     btn.textContent = 'AVVIA MOTORE'; btn.classList.remove('on');
@@ -135,13 +164,13 @@ async function toggleEngine() {
 
 // ---------------- GPS
 const gps = {
-  id: null, v: 0, a: 0, t: 0, last: null, acc: null, ok: false, err: '',
+  id: null, v: 0, a: 0, t: 0, last: null, acc: null, ok: false, err: '', tr: new GpsTracker(),
   start() {
     if (this.id !== null || !('geolocation' in navigator)) { if (!('geolocation' in navigator)) this.err = 'GPS non disponibile'; return; }
     this.id = navigator.geolocation.watchPosition((p) => this.onPos(p), (e) => { this.err = e.message || 'errore GPS'; this.ok = false; },
       { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 });
   },
-  stop() { if (this.id !== null) navigator.geolocation.clearWatch(this.id); this.id = null; this.ok = false; },
+  stop() { if (this.id !== null) navigator.geolocation.clearWatch(this.id); this.id = null; this.ok = false; this.tr.reset(); },
   onPos(p) {
     const t = p.timestamp / 1000, c = p.coords;
     let s = c.speed;
@@ -152,14 +181,10 @@ const gps = {
       const dt = t - this.last.timestamp / 1000; s = dt > 0 ? 2 * R * Math.asin(Math.sqrt(h)) / dt : 0;
     }
     s = Math.max(0, s || 0);
-    if (this.ok && t > this.t) {
-      const dt = t - this.t, aRaw = clamp((s - this.v) / dt, -12, 12);
-      this.a += (aRaw - this.a) * Math.min(1, dt / 0.5);
-    }
-    this.v = s; this.t = t; this.last = p; this.acc = c.accuracy; this.ok = true; this.err = ''; this.rx = performance.now() / 1000;
+    this.tr.fix(t, s, performance.now() / 1000);
+    this.v = this.tr.v; this.a = this.tr.a;
+    this.t = t; this.last = p; this.acc = c.accuracy; this.ok = true; this.err = ''; this.rx = performance.now() / 1000;
   },
-  // velocità stimata tra un fix e l'altro (predizione lineare breve)
-  speedNow() { if (!this.ok) return 0; const dt = Math.min(1.0, performance.now() / 1000 - this.rx); return Math.max(0, this.v + this.a * dt); },
 };
 
 // ---------------- cambio manuale
@@ -180,13 +205,9 @@ function tick() {
     throttle = (gas || kbGas) ? S.thr : 0;
     v = sim.update(dt, throttle, (brake || kbBrake) ? 1 : 0, neutral, state);
   } else {
-    v = gps.speedNow();
-    // carico dal'accelerazione: quanta parte dell'accelerazione massima della marcia viene usata
-    const g = Math.max(1, dtr.gear), coast = 0.25 + 0.0004 * v * v;
-    const aMax = dtr.maxAccel(v, g);
-    const tgt = v < 0.4 && gps.a < 0.2 ? 0 : clamp((gps.a + coast) / aMax * S.sens, 0, 1);
-    gpsLoad += (tgt - gpsLoad) * Math.min(1, dt / 0.25);
-    throttle = gps.a < -0.4 ? 0 : gpsLoad;
+    // velocità continua tra i fix (niente giri "a scalini") e carico stimato con soglia minima e isteresi
+    v = gps.tr.smooth(dt, now);
+    throttle = gpsLoad = gps.tr.update(dt, v, dtr, S.sens);
     neu = false;
   }
   speed = v;
@@ -204,10 +225,10 @@ function tick() {
     $('#warmStatus').textContent = warm >= 1 ? 'motore caldo' : `in temperatura ${Math.round(warm * 100)}%`;
   } else { state = { rpm: 0, gear: '–', load: 0 }; }
   const src = $('#srcStatus');
-  if (S.source === 'gps') src.textContent = gps.ok ? `GPS ±${Math.round(gps.acc || 0)} m · ${(gps.a).toFixed(1)} m/s²` : (gps.err || 'GPS: in attesa del segnale…');
+  if (S.source === 'gps') src.textContent = gps.ok ? `GPS ±${Math.round(gps.acc || 0)} m · ${(gps.tr.a).toFixed(1)} m/s² · carico ${Math.round(gpsLoad * 100)}%` : (gps.err || 'GPS: in attesa del segnale…');
   else src.textContent = 'Simulazione';
 }
-setInterval(tick, 20);
+setInterval(tick, 20); // 50 Hz: i parametri vengono poi smussati campione per campione nel worklet
 
 // ---------------- contagiri
 const cv = $('#gauge'), g2 = cv.getContext('2d');
@@ -281,11 +302,20 @@ $('#startBtn').onclick = toggleEngine;
 $('#valveBtn').onclick = () => { S.valve = !S.valve; save(); renderSeg(); };
 $('#neutralBtn').onclick = () => { neutral = !neutral; renderSeg(); };
 $('#upBtn').onclick = shiftUp; $('#downBtn').onclick = shiftDown;
+const wid = $('#width'), bas = $('#bass'), tre = $('#treble');
+const toneUI = () => { $('#widthVal').textContent = Math.round(S.width * 100) + '%'; $('#bassVal').textContent = (S.bass > 0 ? '+' : '') + S.bass + ' dB'; $('#trebleVal').textContent = (S.treble > 0 ? '+' : '') + S.treble + ' dB'; };
+wid.value = S.width; bas.value = S.bass; tre.value = S.treble; toneUI();
+wid.oninput = () => { S.width = +wid.value; save(); toneUI(); post({ type: 'params', p: { width: S.width } }); };
+bas.oninput = () => { S.bass = +bas.value; save(); toneUI(); post({ type: 'params', p: { bass: S.bass } }); };
+tre.oninput = () => { S.treble = +tre.value; save(); toneUI(); post({ type: 'params', p: { treble: S.treble } }); };
 const vol = $('#vol'); vol.value = S.volume; vol.oninput = () => { S.volume = +vol.value; save(); };
 const thr = $('#thr'); thr.value = S.thr; thr.oninput = () => { S.thr = +thr.value; save(); renderSeg(); };
 const sens = $('#sens'); sens.value = S.sens; sens.oninput = () => { S.sens = +sens.value; save(); renderSeg(); };
 const hy = $('#hybridChk'); hy.checked = S.hybrid; hy.onchange = async () => { S.hybrid = hy.checked; save(); if (ctx) { if (S.hybrid) await loadLoops(); else post({ type: 'loops', loops: [] }); } };
 const mc = $('#mediaChk'); mc.checked = S.media; mc.onchange = () => { S.media = mc.checked; save(); if (ctx) setupSilentMedia(); };
+const sc = $('#safeChk'); sc.checked = S.safe;
+sc.onchange = () => { S.safe = sc.checked; save(); log('Modalità sicura: ' + (S.safe ? 'attiva' : 'disattiva'));
+  if (ctx) { post({ type: 'params', p: { lite: S.safe } }); connectOutput(); if (S.safe) { const el = $('#mediaEl'); if (!el.srcObject) el.pause(); } } };
 const rc = $('#routeChk'); rc.checked = S.route; rc.onchange = () => { S.route = rc.checked; save(); if (ctx) connectOutput(); };
 function holdBtn(el, set) {
   const on = (e) => { e.preventDefault(); set(true); el.classList.add('pressed'); };
@@ -307,4 +337,4 @@ renderSeg();
 if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch((e) => console.warn('SW', e));
 
 // hook per i test automatici
-window.__rombo = { S, dtr, get state() { return state; }, get ctx() { return ctx; }, get node() { return node; }, gps };
+window.__rombo = { S, dtr, logLines, get state() { return state; }, get ctx() { return ctx; }, get node() { return node; }, gps };
