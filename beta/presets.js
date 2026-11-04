@@ -1,11 +1,11 @@
-// Rombo — preset motori (parametri originali, nessun marchio).
+// Rombo — preset motori (parametri originali). name = auto famosa con quel tipo di motore (solo etichetta), engine = sottotitolo.
 // Angoli di scoppio in gradi albero (ciclo 0..720), ordinati; bank = collettore/linea di scarico.
 // runner = lunghezza del collettore primario del cilindro (m); ratios = rapporti cambio; final = coppia conica;
 // tyre = circonferenza di rotolamento (m).
 
 export const PRESETS = {
   i6tt: {
-    id: 'i6tt', block: 0.40, blockF: 1650, name: '6 in linea Biturbo', short: '6TT',
+    id: 'i6tt', block: 0.40, blockF: 1650, name: 'Toyota Supra MK4', engine: '2JZ · 6 in linea biturbo', short: '6TT',
     cyl: 6,
     // 3.0 6 cilindri in linea biturbo sequenziale. Ordine 1-5-3-6-2-4, scoppi ogni 120° (regolare).
     // Collettore diviso: cil. 1-2-3 -> ramo anteriore (0), 4-5-6 -> ramo posteriore (1).
@@ -34,7 +34,7 @@ export const PRESETS = {
     mech: 0.035, whineOrder: 28, pops: 0.35, popTone: 1700, drive: 1.5, gain: 1.3, width: 0.2,
   },
   i4t: {
-    id: 'i4t', block: 0.47, blockF: 1500, name: '4 cilindri Turbo', short: '4T',
+    id: 'i4t', block: 0.47, blockF: 1500, name: 'Mitsubishi Lancer Evo', engine: '4G63 · 4 in linea turbo', short: '4T',
     cyl: 4,
     fire: [0, 180, 360, 540],
     bank: [0, 0, 0, 0],
@@ -52,7 +52,7 @@ export const PRESETS = {
     mech: 0.035, whineOrder: 26, pops: 0.30, popTone: 1800, drive: 1.4, gain: 1.0, width: 0.25,
   },
   i5: {
-    id: 'i5', block: 0.52, blockF: 1700, name: '5 cilindri', short: '5C',
+    id: 'i5', block: 0.52, blockF: 1700, name: 'Audi Quattro', engine: '5 in linea turbo', short: '5C',
     cyl: 5,
     fire: [0, 144, 288, 432, 576],
     bank: [0, 0, 0, 0, 0],
@@ -71,7 +71,7 @@ export const PRESETS = {
     mech: 0.04, whineOrder: 30, pops: 0.40, popTone: 2000, drive: 1.6, gain: 0.95, width: 0.3,
   },
   f6: {
-    id: 'f6', block: 0.24, blockF: 2200, name: '6 Boxer aspirato', short: 'B6',
+    id: 'f6', block: 0.24, blockF: 2200, name: 'Porsche 911', engine: '6 boxer aspirato', short: 'B6',
     cyl: 6,
     fire: [0, 120, 240, 360, 480, 600],
     // ordine 1-6-2-4-3-5: bancate alternate
@@ -90,7 +90,7 @@ export const PRESETS = {
     mech: 0.055, whineOrder: 34, pops: 0.25, popTone: 2600, drive: 1.5, gain: 1.75, width: 0.45,
   },
   v8: {
-    id: 'v8', block: 0.34, blockF: 1200, name: 'V8 albero a croce', short: 'V8',
+    id: 'v8', block: 0.34, blockF: 1200, name: 'Ford Mustang GT', engine: 'V8 5.0 albero a croce', short: 'V8',
     cyl: 8,
     // ordine 1-8-4-3-6-5-7-2, spaziatura 90°; le bancate ricevono impulsi irregolari (borbottio)
     fire: [0, 90, 180, 270, 360, 450, 540, 630],

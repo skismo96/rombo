@@ -3,7 +3,7 @@
 html, body { margin:0; height:100%; background:var(--bg); color:var(--txt); font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; user-select:none; touch-action: manipulation; }
 #app { display:grid; grid-template-columns: 58fr 42fr; height:100vh; gap:2vh; padding:2vh 2vw; }
 #cluster { display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:0; }
-#gauge { width:min(100%, 86vh); height:auto; aspect-ratio:1; }
+#gauge { width:min(100%, 68vh); height:auto; aspect-ratio:1; }
 #status { color:var(--dim); font-size:clamp(14px,1.8vh,24px); margin-top:1vh; }
 #controls { display:flex; flex-direction:column; gap:1.6vh; overflow:auto; padding-right:.5vw; }
 header { display:flex; align-items:baseline; gap:1vw; }
@@ -34,7 +34,8 @@ summary { cursor:pointer; padding:1vh 0; }
 .hidden { display:none !important; }
 @media (max-aspect-ratio: 1/1) {
   #app { grid-template-columns: 1fr; height:auto; }
-  #gauge { width:min(100%, 60vh); }
+  #gauge { width:min(100%, 50vh); }
+  #cluster { justify-content:flex-start; }
   button.big { padding:2vh 2vw; }
 }
 #shiftRow.dim button { opacity:.55; }
@@ -45,3 +46,13 @@ summary { cursor:pointer; padding:1vh 0; }
 
 .beta{font-size:.5em;background:#ff5a1f;color:#0b0d10;border-radius:6px;padding:2px 7px;vertical-align:middle;letter-spacing:.05em}
 header .sub a{color:#8b95a3}
+
+/* pedali sotto il contagiri: grandi, sempre visibili insieme al contagiri */
+#pedalRow { width:min(100%, 80vh); margin-top:1.2vh; gap:3vw; }
+button.pedal { min-height:clamp(72px, 13vh, 170px); font-size:clamp(22px, 4vh, 54px); letter-spacing:.12em; border-width:3px; border-radius:20px;
+  touch-action:none; -webkit-user-select:none; user-select:none; -webkit-touch-callout:none; }
+#gasBtn.pedal { flex:1.4; }
+#presetSeg button { display:flex; flex-direction:column; align-items:center; gap:.3vh; line-height:1.15; padding:1.2vh .6vw; }
+#presetSeg button small { font-size:.62em; font-weight:500; color:var(--dim); }
+#presetSeg button.sel small { color:#ffb08f; opacity:.85; }
+@media (max-aspect-ratio: 1/1) { #pedalRow { width:100%; } button.pedal { min-height:clamp(72px, 11vh, 120px); } }

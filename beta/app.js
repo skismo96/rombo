@@ -293,11 +293,11 @@ function setSource(s) {
 }
 function renderSeg() {
   const ps = $('#presetSeg');
-  if (!ps.children.length) for (const id of PRESET_ORDER) { const b = document.createElement('button'); b.dataset.v = id; b.textContent = PRESETS[id].name; b.onclick = () => setPreset(id); ps.appendChild(b); }
+  if (!ps.children.length) for (const id of PRESET_ORDER) { const b = document.createElement('button'); b.dataset.v = id; b.innerHTML = ''; const t = document.createElement('span'); t.className = 'car'; t.textContent = PRESETS[id].name; const st = document.createElement('small'); st.textContent = PRESETS[id].engine || ''; b.append(t, st); b.title = PRESETS[id].name + ' — ' + (PRESETS[id].engine || ''); b.onclick = () => setPreset(id); ps.appendChild(b); }
   for (const b of ps.children) b.classList.toggle('sel', b.dataset.v === S.preset);
   for (const b of $('#modeSeg').children) b.classList.toggle('sel', b.dataset.v === S.mode);
   for (const b of $('#srcSeg').children) b.classList.toggle('sel', b.dataset.v === S.source);
-  $('#simPanel').classList.toggle('hidden', S.source !== 'sim');
+  $('#simPanel').classList.toggle('hidden', S.source !== 'sim'); $('#pedalRow').classList.toggle('hidden', S.source !== 'sim');
   $('#shiftRow').classList.toggle('dim', S.mode !== 'manual');
   const vb = $('#valveBtn'); vb.classList.toggle('on', S.valve); vb.querySelector('b').textContent = S.valve ? 'APERTA' : 'CHIUSA';
   const nb = $('#neutralBtn'); nb.classList.toggle('on', neutral); nb.querySelector('b').textContent = neutral ? 'SÌ' : 'NO';
@@ -327,9 +327,18 @@ sc.onchange = () => { S.safe = sc.checked; save(); log('Modalità sicura: ' + (S
   if (ctx) { post({ type: 'params', p: { lite: S.safe } }); connectOutput(); if (S.safe) { const el = $('#mediaEl'); if (!el.srcObject) el.pause(); } } };
 const rc = $('#routeChk'); rc.checked = S.route; rc.onchange = () => { S.route = rc.checked; save(); if (ctx) connectOutput(); };
 function holdBtn(el, set) {
-  const on = (e) => { e.preventDefault(); set(true); el.classList.add('pressed'); };
-  const off = () => { set(false); el.classList.remove('pressed'); };
-  el.addEventListener('pointerdown', on); el.addEventListener('pointerup', off); el.addEventListener('pointerleave', off); el.addEventListener('pointercancel', off);
+  // tieni premuto = pedale giù; si rilascia sempre: sollevando il dito, uscendo dal pulsante, su annullamento del tocco,
+  // perdita di focus o scheda nascosta. Niente menu contestuale con la pressione lunga.
+  const on = (e) => { if (e.cancelable) e.preventDefault(); set(true); el.classList.add('pressed'); };
+  const off = () => { if (!el.classList.contains('pressed')) { set(false); return; } set(false); el.classList.remove('pressed'); };
+  el.addEventListener('pointerdown', on);
+  // col tocco il browser "cattura" il dito sul pulsante: pointerleave non arriva, quindi si controlla la posizione
+  el.addEventListener('pointermove', (e) => { if (!el.classList.contains('pressed')) return; const r = el.getBoundingClientRect();
+    if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) off(); });
+  for (const ev of ['pointerup', 'pointerleave', 'pointercancel', 'lostpointercapture', 'touchend', 'touchcancel']) el.addEventListener(ev, off);
+  el.addEventListener('touchstart', (e) => { if (e.cancelable) e.preventDefault(); if (!el.classList.contains('pressed')) on(e); }, { passive: false });
+  el.addEventListener('contextmenu', (e) => e.preventDefault());
+  window.addEventListener('blur', off); document.addEventListener('visibilitychange', () => { if (document.hidden) off(); });
   el.addEventListener('contextmenu', (e) => e.preventDefault());
 }
 holdBtn($('#gasBtn'), (v) => { gas = v; }); holdBtn($('#brakeBtn'), (v) => { brake = v; });

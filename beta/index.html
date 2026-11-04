@@ -14,6 +14,10 @@
   <section id="cluster">
     <canvas id="gauge" width="900" height="900" aria-label="Contagiri"></canvas>
     <div id="status"><span id="srcStatus">Simulazione</span> · <span id="warmStatus">motore freddo</span></div>
+    <div id="pedalRow" class="row">
+      <button id="gasBtn" class="big hold accent pedal">GAS</button>
+      <button id="brakeBtn" class="big hold pedal">FRENO</button>
+    </div>
   </section>
 
   <section id="controls">
@@ -61,8 +65,6 @@
 
     <div id="simPanel" class="group">
       <div class="row">
-        <button id="gasBtn" class="big hold accent">GAS</button>
-        <button id="brakeBtn" class="big hold">FRENO</button>
         <button id="neutralBtn" class="toggle">Folle: <b>NO</b></button>
       </div>
       <div class="vol"><label for="thr">Pedale <span id="thrVal">100%</span></label><input id="thr" type="range" min="0.1" max="1" step="0.05"></div>
@@ -71,7 +73,7 @@
     <details id="more">
       <summary>Altre impostazioni</summary>
       <div class="vol"><label for="sens">Sensibilità GPS (carico) <span id="sensVal"></span></label><input id="sens" type="range" min="0.3" max="3" step="0.1"></div>
-      <label class="chk"><input type="checkbox" id="hybridChk"> Strato campioni reali CC0 (sperimentale, solo 4T, fino a ~3000 giri)</label>
+      <label class="chk"><input type="checkbox" id="hybridChk"> Strato campioni reali CC0 (sperimentale, solo Lancer Evo, fino a ~3000 giri)</label>
       <label class="chk"><input type="checkbox" id="safeChk"> Modalità sicura (audio minimo: niente EQ/stereo, niente elementi media)</label>
       <label class="chk"><input type="checkbox" id="mediaChk"> Comandi volante (Media Session) — sperimentale</label>
       <label class="chk"><input type="checkbox" id="routeChk"> Instrada l'audio come sorgente media (prova se l'auto non riproduce)</label>
