@@ -9,10 +9,11 @@ const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
 // ---------------- impostazioni persistenti
 // BETA: chiave separata, così la beta non tocca mai le impostazioni della versione principale (stessa origine)
 const KEY = 'rombo-beta';
-const DEF = { v: 'b1', preset: 'i6tt', mode: 'comfort', valve: false, volume: 0.8, source: 'sim', thr: 1, sens: 1, hybrid: false, media: false, route: false, width: 0.6, bass: 0, treble: 0, safe: false, pops: 1 };
+const DEF = { v: 'b2', preset: 'i6tt', mode: 'comfort', valve: false, volume: 0.8, source: 'sim', thr: 1, sens: 1, hybrid: false, media: false, route: false, width: 0.6, bass: 0, treble: 0, safe: false, pops: 1, cruise: true };
 let saved = {}; try { saved = JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch (_) {}
 const S = Object.assign({}, DEF, saved);
-if (S.v !== 'b1' || !PRESETS[S.preset]) { Object.assign(S, DEF); } // funzioni rischiose sempre spente di default
+if (S.v !== 'b2' || !PRESETS[S.preset]) { Object.assign(S, DEF); } // funzioni rischiose sempre spente di default
+if (typeof S.cruise !== 'boolean') S.cruise = true;
 const save = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (_) {} };
 
 // ---------------- stato
@@ -173,6 +174,7 @@ async function toggleEngine() {
 const gps = {
   id: null, acc: null, ok: false, err: '', drv: new GpsDriver(dtr),
   get tr() { return this.drv.tr; },
+  get cruise() { return this.drv.cruise; },
   start() {
     if (this.id !== null || !('geolocation' in navigator)) { if (!('geolocation' in navigator)) this.err = 'GPS non disponibile'; return; }
     this.err = 'GPS: in attesa del permesso / del segnale…';
@@ -210,6 +212,7 @@ function tick() {
     v = sim.update(dt, throttle, (brake || kbBrake) ? 1 : 0, neutral, state);
   } else {
     // pilota virtuale: il GPS guida lo stesso veicolo/cambio di Simulazione (pedale e freno stimati)
+    gps.drv.cruiseOn = !!S.cruise;
     const o = gps.drv.update(dt, now, state, S.sens);
     v = o.v; throttle = gpsLoad = o.throttle;
     neu = false;
@@ -232,8 +235,10 @@ function tick() {
     $('#warmStatus').textContent = warm >= 1 ? 'motore caldo' : `in temperatura ${Math.round(warm * 100)}%`;
   } else { state = { rpm: 0, gear: '–', load: 0 }; }
   const src = $('#srcStatus');
-  if (S.source === 'gps') src.textContent = gps.ok ? `GPS ±${Math.round(gps.acc || 0)} m · ${(gps.tr.a).toFixed(1)} m/s² · pedale ${Math.round(gpsLoad * 100)}%` : (gps.err || 'GPS: in attesa del segnale…');
-  else src.textContent = 'Simulazione';
+  if (S.source === 'gps') {
+    if (!gps.ok) src.textContent = gps.err || 'GPS: in attesa del segnale…';
+    else src.textContent = `GPS ±${Math.round(gps.acc || 0)} m · ${(gps.tr.a).toFixed(1)} m/s² · pedale ${Math.round(gpsLoad * 100)}%` + (gps.drv.cruise ? ' · CROCIERA' : '');
+  } else src.textContent = 'Simulazione';
 }
 setInterval(tick, 20); // 50 Hz: i parametri vengono poi smussati campione per campione nel worklet
 
@@ -298,6 +303,8 @@ function renderSeg() {
   for (const b of $('#modeSeg').children) b.classList.toggle('sel', b.dataset.v === S.mode);
   for (const b of $('#srcSeg').children) b.classList.toggle('sel', b.dataset.v === S.source);
   $('#simPanel').classList.toggle('hidden', S.source !== 'sim'); $('#pedalRow').classList.toggle('hidden', S.source !== 'sim');
+  const crShow = S.source === 'gps';
+  $('#cruiseRow').classList.toggle('show', crShow); $('#cruiseHint').classList.toggle('show', crShow);
   $('#shiftRow').classList.toggle('dim', S.mode !== 'manual');
   const vb = $('#valveBtn'); vb.classList.toggle('on', S.valve); vb.querySelector('b').textContent = S.valve ? 'APERTA' : 'CHIUSA';
   const nb = $('#neutralBtn'); nb.classList.toggle('on', neutral); nb.querySelector('b').textContent = neutral ? 'SÌ' : 'NO';
@@ -320,6 +327,8 @@ const thr = $('#thr'); thr.value = S.thr; thr.oninput = () => { S.thr = +thr.val
 const pp = $('#pops'); const popsUI = () => { $('#popsVal').textContent = S.pops <= 0 ? 'off' : Math.round(S.pops * 100) + '%'; };
 pp.value = S.pops; popsUI(); pp.oninput = () => { S.pops = +pp.value; save(); popsUI(); post({ type: 'params', p: { pops: S.pops } }); };
 const sens = $('#sens'); sens.value = S.sens; sens.oninput = () => { S.sens = +sens.value; save(); renderSeg(); };
+const cruiseChk = $('#cruiseChk'); cruiseChk.checked = !!S.cruise;
+cruiseChk.onchange = () => { S.cruise = cruiseChk.checked; gps.drv.cruiseOn = S.cruise; if (!S.cruise) { gps.drv.cruise = false; gps.drv.stableT = 0; } save(); };
 const hy = $('#hybridChk'); hy.checked = S.hybrid; hy.onchange = async () => { S.hybrid = hy.checked; save(); if (ctx) { if (S.hybrid) await loadLoops(); else post({ type: 'loops', loops: [] }); } };
 const mc = $('#mediaChk'); mc.checked = S.media; mc.onchange = () => { S.media = mc.checked; save(); if (ctx) setupSilentMedia(); };
 const sc = $('#safeChk'); sc.checked = S.safe;
@@ -341,6 +350,7 @@ function holdBtn(el, set) {
   window.addEventListener('blur', off); document.addEventListener('visibilitychange', () => { if (document.hidden) off(); });
   el.addEventListener('contextmenu', (e) => e.preventDefault());
 }
+gps.drv.cruiseOn = !!S.cruise;
 holdBtn($('#gasBtn'), (v) => { gas = v; }); holdBtn($('#brakeBtn'), (v) => { brake = v; });
 window.addEventListener('keydown', (e) => {
   const k = e.key;

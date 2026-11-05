@@ -176,10 +176,11 @@ export class GpsTracker {
 // veicolo simulato identico a quello di Simulazione; un regolatore calcola pedale e freno virtuali. Così giri,
 // carico e cambiate si comportano come in Simulazione, senza gradini né tagli quando si supera una soglia.
 export class GpsDriver {
-  constructor(dtr) { this.dtr = dtr; this.tr = new GpsTracker(); this.sim = new SimVehicle(dtr); this.reset(); }
+  constructor(dtr) { this.dtr = dtr; this.tr = new GpsTracker(); this.sim = new SimVehicle(dtr); this.cruiseOn = true; this.reset(); }
   reset() {
     this.tr.reset(); this.sim.v = 0; this.pedal = 0; this.brake = 0; this.lift = false; this.last = null; this.lastT = null;
     this.acc = null; this.vT = 0; this.stats = { fixes: 0, used: 0, dup: 0, rejected: 0, nullSpeed: 0 };
+    this.cruise = false; this.cruisePed = 0; this.cruiseV = 0; this.stableT = 0; this.liftT = 0;
   }
   // ts = timestamp del fix in ms, c = coords {speed, latitude, longitude, accuracy}, now = orologio locale (s)
   onPos(ts, c, now) {
@@ -208,7 +209,7 @@ export class GpsDriver {
     this.tr.fix(t, s, now);
     return true;
   }
-  // un passo del pilota virtuale; state = ultimo stato della trasmissione (rpm, shifting). Restituisce {v, throttle, brake}
+  // un passo del pilota virtuale; state = ultimo stato della trasmissione (rpm, shifting). Restituisce {v, throttle, brake, cruise}
   update(dt, now, state, sens = 1) {
     const tr = this.tr, dtr = this.dtr, p = dtr.p, m = p.mass, vs = this.sim.v;
     const fresh = tr.ok && now - tr.rx < 1.5;
@@ -220,21 +221,51 @@ export class GpsDriver {
     const aMax = dtr.maxAccel(Math.max(vs, 0.5), Math.max(1, dtr.gear));
     let ped = (aCmd + resist) / aMax * sens;
     let brk = 0;
-    if (lead < 0.3 && vs < 0.6) { ped = 0; brk = 1; } // fermo
+    if (lead < 0.3 && vs < 0.6) { ped = 0; brk = 1; this.cruise = false; this.stableT = 0; } // fermo
     else {
       // rilascio vero solo con decelerazione netta e prolungata (frenata/rigenerazione); le piccole variazioni
       // di velocità restano "gas parziale", così il suono non si spegne mai per il rumore o la latenza del GPS
       this.liftT = ped < 0 && aCmd < -1.0 ? (this.liftT || 0) + dt : 0;
       if (this.lift) { if (ped > 0.04 || aCmd > -0.5) this.lift = false; } else if (this.liftT > 0.4) this.lift = true;
-      if (this.lift) { brk = clamp(-(aCmd + resist * 0.5) / 9, 0, 1) * (ped < -0.15 ? 1 : 0); ped = 0; }
+      if (this.lift) { brk = clamp(-(aCmd + resist * 0.5) / 9, 0, 1) * (ped < -0.15 ? 1 : 0); ped = 0; this.cruise = false; this.stableT = 0; }
       else ped = clamp(ped, 0.03, 1);
     }
-    const tau = ped > this.pedal ? 0.12 : 0.2;
+
+    // --- mantenimento crociera: se la velocità GPS è stabile per qualche secondo, blocca pedale/carico
+    //     così il suono non "caccia" per i micro-rumori del GPS. Si sblocca con accel/freno reali.
+    if (this.cruiseOn && !this.lift && brk < 0.05 && lead >= 4) {
+      const stable = Math.abs(aT) < 0.35 && Math.abs(aCmd) < 0.55 && Math.abs(vT - vs) < 1.2;
+      if (this.cruise) {
+        // sblocca solo su intenito vero (accel/freno/cambio velocità), non sul rumore GPS
+        const unlock = Math.abs(aT) > 0.85 || Math.abs(vT - this.cruiseV) > 2.2 || Math.abs(aCmd) > 1.8 || ped > this.cruisePed + 0.28 || ped < 0.02;
+        if (unlock) { this.cruise = false; this.stableT = 0; }
+        else {
+          // pedale bloccato in modo morbido; velocità ancorata alla media crociera
+          ped = this.cruisePed;
+          const holdV = this.cruiseV;
+          // aggiorna leggermente il riferimento se il GPS scorre di pochissimo (deriva)
+          this.cruiseV += (vT - this.cruiseV) * Math.min(1, dt / 8);
+        }
+      } else if (stable) {
+        this.stableT += dt;
+        if (this.stableT > 2.4) {
+          this.cruise = true;
+          this.cruisePed = clamp(this.pedal, 0.08, 0.85);
+          this.cruiseV = vT;
+        }
+      } else this.stableT = Math.max(0, this.stableT - dt * 1.5);
+    } else { this.cruise = false; this.stableT = 0; }
+
+    const tau = this.cruise ? 0.35 : (ped > this.pedal ? 0.12 : 0.2);
     this.pedal += (ped - this.pedal) * Math.min(1, dt / tau);
     this.brake = brk;
     let v = this.sim.update(dt, this.pedal, brk, false, state);
-    // aggancio morbido alla velocità GPS: la dinamica resta quella del veicolo simulato ma non può "perdere" il GPS
-    if (!(lead < 0.3 && vs < 0.6)) { v += (lead - v) * Math.min(1, dt / 1.0); this.sim.v = v = Math.max(0, v); }
-    return { v, throttle: this.pedal, brake: brk, target: vT };
+    // aggancio morbido alla velocità GPS: in crociera ancora più lento per evitare micro-caccia
+    if (!(lead < 0.3 && vs < 0.6)) {
+      const slaveTau = this.cruise ? 2.8 : 1.0;
+      const target = this.cruise ? this.cruiseV : lead;
+      v += (target - v) * Math.min(1, dt / slaveTau); this.sim.v = v = Math.max(0, v);
+    }
+    return { v, throttle: this.pedal, brake: brk, target: vT, cruise: this.cruise };
   }
 }

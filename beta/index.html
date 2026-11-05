@@ -14,9 +14,17 @@
   <section id="cluster">
     <canvas id="gauge" width="900" height="900" aria-label="Contagiri"></canvas>
     <div id="status"><span id="srcStatus">Simulazione</span> · <span id="warmStatus">motore freddo</span></div>
-    <div id="pedalRow" class="row">
-      <button id="gasBtn" class="big hold accent pedal">GAS</button>
-      <button id="brakeBtn" class="big hold pedal">FRENO</button>
+    <div id="pedalRow" class="pedals" aria-label="Pedali simulazione">
+      <button id="gasBtn" class="pedal-btn gas hold" type="button" aria-label="Gas">
+        <span class="pedal-arm"></span>
+        <span class="pedal-pad"><span class="pedal-rib"></span><span class="pedal-rib"></span><span class="pedal-rib"></span><span class="pedal-rib"></span></span>
+        <span class="pedal-label">GAS</span>
+      </button>
+      <button id="brakeBtn" class="pedal-btn brake hold" type="button" aria-label="Freno">
+        <span class="pedal-arm"></span>
+        <span class="pedal-pad"><span class="pedal-rib"></span><span class="pedal-rib"></span><span class="pedal-rib"></span></span>
+        <span class="pedal-label">FRENO</span>
+      </button>
     </div>
   </section>
 
@@ -56,6 +64,8 @@
         <button data-v="gps">GPS (guida)</button>
         <button data-v="sim">Simulazione</button>
       </div>
+      <label class="chk" id="cruiseRow"><input type="checkbox" id="cruiseChk" checked> Mantieni crociera (GPS)</label>
+      <p class="hint" id="cruiseHint">Se la velocità GPS resta stabile per qualche secondo, il pedale virtuale si blocca in modo morbido: il suono di crociera non “caccia”. Si sblocca da solo se accelera o frena.</p>
     </div>
 
     <div id="shiftRow" class="row">
